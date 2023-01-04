@@ -1,0 +1,4 @@
+/node_modules
+/.idea
+/limit-payload-step-function/.serverless
+/limit-payload-step-function/.serverless/serverless-state.json

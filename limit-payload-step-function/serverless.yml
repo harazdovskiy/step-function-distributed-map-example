@@ -1,0 +1,56 @@
+service: limit-payload-step-function
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  stage: dev
+  region: us-east-1
+  accountId: 670313496061
+  architecture: arm64
+
+package:
+  individually: true
+
+plugins:
+  - serverless-step-functions
+
+functions:
+  captureInput:
+    handler: capture-input/handler.handler
+    name: ${self:provider.stage}-${self:service}-captureInput
+    timeout: 900
+    memorySize: 1024
+    tags:
+      name: captureInput
+
+  processOutput:
+    handler: process-output/handler.handler
+    name: ${self:provider.stage}-${self:service}-processOutput
+    timeout: 900
+    memorySize: 128
+    tags:
+      name: processOutput
+
+stepFunctions:
+  stateMachines:
+    ProcessDataStateMachine:
+      name: process-data-state-machine
+      definition:
+        StartAt: CaptureInput
+        States:
+          CaptureInput:
+            Type: Task
+            Resource: arn:aws:lambda:${self:provider.region}:${self:provider.accountId}:function:${self:provider.stage}-${self:service}-captureInput
+            Next: MapData
+          MapData:
+            MaxConcurrency: 5
+            Type: Map
+            InputPath: $
+            Iterator:
+              StartAt: ProcessData
+              States:
+                ProcessData:
+                  Type: Task
+                  Resource: arn:aws:lambda:${self:provider.region}:${self:provider.accountId}:function:${self:provider.stage}-${self:service}-processOutput
+                  End: true
+            End: true
