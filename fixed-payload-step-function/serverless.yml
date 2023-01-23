@@ -1,0 +1,65 @@
+service: fixed-payload-step-function
+
+provider:
+  name: aws
+  runtime: nodejs18.x
+  stage: dev
+  region: us-east-1
+  accountId: 670313496061
+  architecture: arm64
+
+package:
+  individually: true
+
+plugins:
+  - serverless-step-functions
+
+functions:
+  captureInput:
+    handler: capture-input/handler.handler
+    name: ${self:provider.stage}-${self:service}-captureInput
+    timeout: 900
+    memorySize: 1024
+    tags:
+      name: captureInput
+
+  processOutput:
+    handler: process-output/handler.handler
+    name: ${self:provider.stage}-${self:service}-processOutput
+    timeout: 900
+    memorySize: 128
+    tags:
+      name: processOutput
+
+stepFunctions:
+  validate: false
+  stateMachines:
+    ProcessDataStateMachine:
+      name: process-data-state-machine
+      definition:
+        StartAt: CaptureInput
+        States:
+          CaptureInput:
+            Type: Task
+            Resource: arn:aws:lambda:${self:provider.region}:${self:provider.accountId}:function:${self:provider.stage}-${self:service}-captureInput
+            Next: File Analysis
+          FileAnalysis:
+            Type: Map
+            ItemProcessor:
+              ProcessorConfig:
+                Mode: DISTRIBUTED
+                ExecutionType: STANDARD
+              StartAt: ProcessData
+              States:
+                ProcessData:
+                  Type: Task
+                  Resource: arn:aws:lambda:${self:provider.region}:${self:provider.accountId}:function:${self:provider.stage}-${self:service}-processOutput
+                  End: true
+            ItemReader:
+              Resource: arn:aws:states:::s3:getObject
+              ReaderConfig:
+                InputType: JSON
+              Parameters: { }
+            MaxConcurrency: 1000
+            Label: FileAnalysis
+            End: true
