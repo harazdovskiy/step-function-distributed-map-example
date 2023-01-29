@@ -1,4 +1,4 @@
-service: fixed-payload-step-function
+service: fixed-step-function
 
 provider:
   name: aws
@@ -7,12 +7,24 @@ provider:
   region: us-east-1
   accountId: 670313496061
   architecture: arm64
+  environment:
+    BUCKET_NAME: step-function-payloads
+  iam:
+    role:
+      statements:
+        - Effect: 'Allow'
+          Action:
+            - 's3:*'
+          Resource:
+            - 'arn:aws:s3:::step-function-payloads/*'
+            - 'arn:aws:s3:::step-function-payloads'
 
 package:
   individually: true
 
 plugins:
   - serverless-step-functions
+  - serverless-iam-roles-per-function
 
 functions:
   captureInput:
@@ -31,20 +43,33 @@ functions:
     tags:
       name: processOutput
 
+custom:
+  serverless-iam-roles-per-function:
+    defaultInherit: true
+
 stepFunctions:
-  validate: false
   stateMachines:
     ProcessDataStateMachine:
-      name: process-data-state-machine
+      name: process-data-state-machine-distributed
+      role:
+        Fn::GetAtt: [ "ProcessDataStateMachineStepFunctionRole", "Arn" ]
       definition:
         StartAt: CaptureInput
         States:
           CaptureInput:
             Type: Task
             Resource: arn:aws:lambda:${self:provider.region}:${self:provider.accountId}:function:${self:provider.stage}-${self:service}-captureInput
-            Next: File Analysis
-          FileAnalysis:
+            Next: MapData
+          MapData:
             Type: Map
+            MaxConcurrency: 5
+            ItemReader:
+              Resource: arn:aws:states:::s3:getObject
+              ReaderConfig:
+                InputType: JSON
+              Parameters:
+                Bucket.$: $.bucket
+                Key.$: $.path
             ItemProcessor:
               ProcessorConfig:
                 Mode: DISTRIBUTED
@@ -55,11 +80,65 @@ stepFunctions:
                   Type: Task
                   Resource: arn:aws:lambda:${self:provider.region}:${self:provider.accountId}:function:${self:provider.stage}-${self:service}-processOutput
                   End: true
-            ItemReader:
-              Resource: arn:aws:states:::s3:getObject
-              ReaderConfig:
-                InputType: JSON
-              Parameters: { }
-            MaxConcurrency: 1000
-            Label: FileAnalysis
             End: true
+
+resources:
+  Resources:
+    ProcessDataStateMachineStepFunctionRole:
+      Type: "AWS::IAM::Role"
+      Properties:
+        RoleName: ${self:provider.stage}-ProcessDataStateMachine-StepFunctionRole
+        AssumeRolePolicyDocument:
+          Statement:
+            - Effect: Allow
+              Principal:
+                Service:
+                  - states.amazonaws.com
+              Action:
+                - sts:AssumeRole
+        Policies:
+          - PolicyName: ${self:provider.stage}-${self:service}-lambda-invoke
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: 'Allow'
+                  Action:
+                    - 'lambda:*'
+                  Resource:
+                    - 'arn:aws:lambda:*:*:function:${self:provider.stage}-*'
+          - PolicyName: ${self:provider.stage}-${self:service}-start-execution
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: 'Allow'
+                  Action:
+                    - 'states:StartExecution'
+                  Resource:
+                    - arn:aws:states:${self:provider.region}:${aws:accountId}:stateMachine:${self:stepFunctions.stateMachines.ProcessDataStateMachine.name}
+          - PolicyName: ${self:provider.stage}-${self:service}-default-logging
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: 'Allow'
+                  Action:
+                    - 'logs:CreateLogGroup'
+                    - 'logs:CreateLogStream'
+                    - 'logs:PutLogEvents'
+                  Resource:
+                    - 'arn:aws:logs:*:*:log-group:/aws/lambda/*'
+
+                - Effect: 'Allow'
+                  Action:
+                    - 'xray:PutTraceSegments'
+                    - 'xray:PutTelemetryRecords'
+                  Resource:
+                    - '*'
+          - PolicyName: ${self:provider.stage}-${self:service}-read-s3-bucket
+            PolicyDocument:
+              Version: '2012-10-17'
+              Statement:
+                - Effect: 'Allow'
+                  Action:
+                    - 's3:*'
+                  Resource:
+                    - arn:aws:s3:::step-function-payloads/*

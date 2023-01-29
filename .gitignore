@@ -1,4 +1,6 @@
-/node_modules
+/**/node_modules
 /.idea
 /limit-payload-step-function/.serverless
 /fixed-payload-step-function/.serverless
+/fixed-payload-step-function/node_modules
+/**/yarn.lock
