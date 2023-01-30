@@ -142,3 +142,9 @@ resources:
                     - 's3:*'
                   Resource:
                     - arn:aws:s3:::step-function-payloads/*
+
+    PayloadBucket:
+      Type: AWS::S3::Bucket
+      DeletionPolicy: Retain
+      Properties:
+        BucketName: step-function-payloads
